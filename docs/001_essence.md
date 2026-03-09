@@ -417,6 +417,7 @@ resource.unit_id  → unit_master（単位の正規化）
 | **unit_master** | _id, name | 単位の正規化 |
 | **track_master** | _id, name, granularity | 記録文脈の種類 |
 | **resource_track** | _id, resource_id, track_id | resource ごとの許可 track |
+| **resource_link** | _id, source_id, target_id, ratio | resource 間の変換比率 |
 
 ### Zod スキーマ（TypeScript）
 
@@ -476,6 +477,13 @@ const TrackMaster = z.object({
   name:        z.string(),
   granularity: z.enum(['point', 'day', 'week', 'month', 'quarter']),
 });
+
+const ResourceLink = z.object({
+  _id:       z.string(),
+  source_id: z.string(),               // → resource（変換元）
+  target_id: z.string(),               // → resource（変換先）
+  ratio:     z.number(),               // target units per 1 source unit
+});
 ```
 
 ### 拡張テーブルで対応する領域
@@ -487,7 +495,7 @@ const TrackMaster = z.object({
 | ディメンションの業務属性 | activity の状態・期間・分類 | 列追加、または別テーブル |
 | 対象の実体 | メンバー、取引先、材料 | attrs が参照するテーブル |
 | 契約管理 | 受注、発注、請求 | 別テーブル。activity_id で紐付け |
-| リソース間の導出関係 | 食品→栄養素の変換 | food_nutrition_profile 等のマッピングテーブル |
+| リソース間の変換比率 | 食品→栄養素、労働→報酬、燃料→排出 等 | resource_link（コアスキーマ） |
 | 貸借検証 | 借方合計 = 貸方合計 | クエリで検証 |
 
 ---
@@ -537,28 +545,32 @@ VALUES (gen_random_uuid(), :ev2, :me, :bread_id, :lunch_id, 'actual', -1,
 -- → _system_from は 19:00 が自動記録
 ```
 
-### 栄養素の導出（拡張テーブル）
+### 栄養素の導出（resource_link）
 
 ```sql
--- food_nutrition_profile テーブル
-INSERT INTO food_nutrition_profile (_id, resource_id, nutrient, factor)
-VALUES (gen_random_uuid(), :bread_id, 'protein', 2.7);  -- 1枚あたり 2.7g
+-- resource_link: 1 pcs of bread → 2.7g protein
+INSERT INTO resource_link (_id, source_id, target_id, ratio)
+VALUES (gen_random_uuid(), :bread_id, :protein_id, 2.7);
 
 -- 1日の栄養摂取クエリ
-SELECT fnp.nutrient, SUM(ABS(e.delta) * fnp.factor) AS intake
+SELECT r.name AS nutrient, SUM(ABS(e.delta) * rl.ratio) AS intake
 FROM entry e
-JOIN food_nutrition_profile fnp ON e.resource_id = fnp.resource_id
+JOIN resource_link rl ON e.resource_id = rl.source_id
+JOIN resource r ON rl.target_id = r._id
 WHERE e.delta < 0
   AND e._valid_from >= TIMESTAMP '2025-05-15'
   AND e._valid_from <  TIMESTAMP '2025-05-16'
-GROUP BY fnp.nutrient;
+GROUP BY r.name;
 ```
+
+resource_link は食品→栄養に限らず、あらゆるリソース間の変換比率を表現する汎用テーブル。
 
 ### 設計上のポイント
 
-- entry は食品単位で記録する。栄養素はクエリ時に導出する
+- entry は食品単位で記録する。栄養素はクエリ時に resource_link 経由で導出する
 - 食品の balance = 在庫（ストック）。残高管理が有意味
 - 栄養素に残高管理は不要。期間集計（1日の摂取量）が主要な関心
+- resource_link の ratio は bi-temporal。配合変更（リニューアル等）は UPDATE で対応し、旧比率は system-time で復元可能
 
 ---
 
@@ -680,7 +692,7 @@ VALUES
    TIMESTAMP '2025-05-15 10:00:00');
 ```
 
-栄養素は food_nutrition_profile 経由でクエリ時に導出。
+栄養素は resource_link 経由でクエリ時に導出。
 
 ---
 
@@ -696,10 +708,10 @@ VALUES
 │            ↓     ↓     ↓                          │
 │         owner activity resource                    │
 │         (tree) (tree)   (tree)                     │
-│                           │                        │
-│                     resource_track                  │
-│                           │                        │
-│                     track_master                    │
+│                         │    │                     │
+│                   resource_track  resource_link     │
+│                         │                          │
+│                   track_master                      │
 │                                                    │
 │  _valid_from: 帰属時点（INSERT 時にアプリが指定）  │
 │  _system_from: 記録時点（XTDB 自動、不変）        │

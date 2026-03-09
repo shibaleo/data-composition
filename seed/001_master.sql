@@ -50,3 +50,28 @@ INSERT INTO resource_track (_id, resource_id, track_id) VALUES
   ('rt-fat-a',        'r-fat',        'actual'),
   ('rt-carb-a',       'r-carb',       'actual'),
   ('rt-salt-eq-a',    'r-salt-eq',    'actual');
+
+-- ===========================================
+-- resource_link
+--   ratio = target units per 1 source unit
+--   e.g. 1 pcs of monster-rr → 0 kcal energy
+--   units are on each resource's unit_id
+-- ===========================================
+
+-- Monster Energy Ruby Red (355ml)
+-- nutrition label: per 100ml → ×3.55 for 355ml
+INSERT INTO resource_link (_id, source_id, target_id, ratio) VALUES
+  ('rl-rr-energy',  'r-monster-rr', 'r-energy',  0),
+  ('rl-rr-protein', 'r-monster-rr', 'r-protein', 0),
+  ('rl-rr-fat',     'r-monster-rr', 'r-fat',     0),
+  ('rl-rr-carb',    'r-monster-rr', 'r-carb',    3.195),
+  ('rl-rr-salt-eq', 'r-monster-rr', 'r-salt-eq', 0.8165);
+
+-- Monster Energy Pipeline Punch (355ml)
+-- nutrition label: per 100ml → ×3.55 for 355ml
+INSERT INTO resource_link (_id, source_id, target_id, ratio) VALUES
+  ('rl-pp-energy',  'r-monster-pp', 'r-energy',  195.25),
+  ('rl-pp-protein', 'r-monster-pp', 'r-protein', 0),
+  ('rl-pp-fat',     'r-monster-pp', 'r-fat',     0),
+  ('rl-pp-carb',    'r-monster-pp', 'r-carb',    46.86),
+  ('rl-pp-salt-eq', 'r-monster-pp', 'r-salt-eq', 0.5325);
