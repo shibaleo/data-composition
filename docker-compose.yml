@@ -1,0 +1,11 @@
+services:
+  xtdb:
+    image: ghcr.io/xtdb/xtdb:latest
+    ports:
+      - "5432:5432"   # pgwire (PostgreSQL互換)
+      - "8080:8080"   # health check / monitoring
+    volumes:
+      - xtdb-data:/var/lib/xtdb
+
+volumes:
+  xtdb-data:
