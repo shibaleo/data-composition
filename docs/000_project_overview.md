@@ -200,10 +200,10 @@ event(2026-03-09 Monster 摂取) ← scenario(健康改善3月)
 ### resource — 分類オントロジー（主軸）
 
 ```sql
-resource(_id, parent_id, is_leaf, cd, name, unit_id, balance_type)
--- balance_type: 'stock' | 'flow'
+resource(_id, parent_id, is_leaf, cd, name, unit_id)
 -- resource は DCMP で定義。DWH のテーブル構造とは独立。
 -- 異なるソース（Toggl/Clockify 等）からの観測が同じ resource に収束する。
+-- balance_type（stock/flow）は廃止。残数管理は beanpost が担う。DCMP は観測のアンカーのみ。
 ```
 
 ### resource_link — 変換ルール定義
@@ -323,83 +323,101 @@ data_composition.observation
 - `fct_time_records_actual` → `rpt_time_records_continuous` に改名（可視化専用 VIEW）
 - `fct_toggl_time_entries` を新設（TABLE、合成行なし、project/tags 非正規化）
 
-### [2026-03] 責務の専門システムへの委任（会計・在庫）
+### [2026-03] 残数管理・会計・食品在庫・栄養を beancount に統一
 
 **背景：**
 
 当初、金銭フロー（収入・支出）を `resource` 階層（`r-money-income` / `r-money-expense`）で表現しようとしていた。
-また、食料品在庫（何をいくつ持っているか）も resource の `balance_type: stock` で管理しようとしていた。
+また、食料品在庫を DCMP の `balance_type: stock` resource で管理しようとしていた。
+さらに食品在庫管理と栄養管理を「別システム」として設計しようとしていた。
 
-**問題：**
+**洞察：**
 
-1. **勘定科目体系は複式簿記の問題** — 資産・負債・純資産・収益・費用の5分類は resource 階層で模倣すべきでない
-2. **食料品残高も同様** — 在庫の増減・残数管理は DCMP の責務ではない
+> 会計とはお金・権利・義務の残数管理と払い出しである。
+
+beancount の複式簿記モデルは「残数管理 + 払い出し」の汎用エンジンであり、
+通貨・物品・栄養素などあらゆる commodity に適用できる。
+また beancount は**複数通貨にネイティブ対応**している（JPY / USD / EUR 等を自然に扱える）。
 
 **決定：**
 
-各責務を独立した専門システムに委任し、DCMP は「共起の記述」に徹する。
+**[gerdemb/beanpost](https://github.com/gerdemb/beanpost)** を Neon 上にデプロイし、
+残数管理を必要とする全ドメインを一つの複式簿記システムに統一する。
 
 ```
-[会計システム] beanpost（gerdemb/beanpost）
-  → 複式簿記。勘定科目体系（資産/負債/純資産/収益/費用）を管理
-  → Posting ごとに UUID → DCMP の record_id として参照
+[beanpost on Neon] ← 残数管理の単一バックエンド
+  Assets:Cash:*                ← 現金・電子マネー（JPY / 複数通貨）
+  Assets:Bank:*                ← 銀行口座
+  Assets:Grocery:MonsterRR     ← 食品在庫（commodity: 品名コード, unit: pcs/g）
+  Assets:Grocery:Egg
+  Liabilities:CreditCard:*     ← クレジットカード
+  Expenses:Food:*              ← 食費（JPY）
+  Expenses:Nutrition:Energy    ← 栄養摂取（commodity: KCAL）
+  Expenses:Nutrition:Protein   ← 栄養摂取（commodity: G）
+  Income:*                     ← 収入
 
-[在庫管理システム] ※ 別途構築（beanpost とは独立）
-  → 物品の残数管理（食料品・消耗品など）
-  → 行ごとに UUID → DCMP の record_id として参照
-
-[DCMP] data_composition
-  → 上記システムの Posting/在庫行を同一 event に紐づけるだけ
-  → 値を持たない。共起のみ
+[DCMP] ← 共起の記述のみ
+  → beanpost の Posting UUID を record_id として参照
+  → 値を持たない
 ```
 
-**採用予定：[gerdemb/beanpost](https://github.com/gerdemb/beanpost)**
+**購入・摂取の beancount 仕訳例：**
 
-- PostgreSQL バックエンドの beancount 実装（Neon 上で動作）
-- Account / Transaction / Posting / Price をそのまま Neon に格納
-- 残高計算は PostgreSQL 関数として提供
+```beancount
+; 購入
+2026-03-10 * "購入" "コンビニ"
+  Assets:Grocery:MonsterRR    +2 MONSTER-RR
+  Assets:Cash:Wallet        -640 JPY
 
-**DCMP の observation との接続イメージ：**
+; 摂取（App が resource_link を参照して栄養 Posting を自動生成）
+2026-03-10 * "摂取"
+  Assets:Grocery:MonsterRR    -1 MONSTER-RR
+  Expenses:Nutrition:Carb  +3.195 CARB-G
+  Expenses:Nutrition:SaltEq +0.817 SALT-G
+```
+
+→ 食品在庫管理と栄養管理が同一トランザクション内で完結。別システム不要。
+
+**DCMP の observation：**
 
 ```
 event: Monster 購入（2026-03-10）
-├── observation(resource=r-grocery,  record_id → 在庫システム.入庫行: MonsterRR +2)
-└── observation(resource=r-money,    record_id → beanpost.Posting: Assets:Cash -640 JPY)
+├── observation(resource=r-grocery, record_id → beanpost.Posting: Assets:Grocery:MonsterRR +2)
+└── observation(resource=r-money,   record_id → beanpost.Posting: Assets:Cash:Wallet -640 JPY)
 
 event: Monster 飲む（2026-03-10）
-├── observation(resource=r-grocery,  record_id → 在庫システム.出庫行: MonsterRR -1)
-├── observation(resource=r-energy,   record_id → 在庫システム.栄養派生行: Energy 0 kcal)
-└── observation(resource=r-time,     record_id → neon.fct_toggl_time_entries)
+├── observation(resource=r-grocery,    record_id → beanpost.Posting: Assets:Grocery:MonsterRR -1)
+├── observation(resource=r-nutrition,  record_id → beanpost.Posting: Expenses:Nutrition:Carb +3.195)
+└── observation(resource=r-time,       record_id → neon.fct_toggl_time_entries)
 ```
 
-**`r-grocery` の役割の変化：**
+**resource_link の役割（変更なし）：**
 
-「在庫残高を持つリソース」→「**resource_link のアンカー（変換比率定義のキー）**」
+App 層が beanpost の出庫 Posting を読んだとき、栄養 Posting を自動生成するための変換表。
 
 ```sql
--- App が在庫出庫を読んで栄養を計算するための変換表
-resource_link(source_id='r-monster-rr', target_id='r-energy', ratio=0)
-resource_link(source_id='r-monster-rr', target_id='r-carb',   ratio=3.195)
+resource_link(source_id='r-monster-rr', target_id='r-carb',    ratio=3.195)
+resource_link(source_id='r-monster-rr', target_id='r-salt-eq', ratio=0.817)
 ```
+
+**DCMP の resource から削除するもの：**
+
+- `r-money-income` / `r-money-expense`（勘定科目詳細は beanpost.Account に委任）
+- `balance_type` カラム（stock/flow の区別は beanpost が持つ。DCMP には不要）
 
 **resource 階層に残るもの：**
 
 | resource | 役割 |
 |---------|------|
-| `r-time` / `r-time-work` / `r-time-life` | 時間リソース（flow） |
-| `r-grocery` / beverage / 個別食品 | resource_link のアンカー（残高は在庫システム） |
-| `r-nutrition` / energy / protein / ... | 栄養摂取リソース（flow） |
-| `r-money` | 金銭観測のアンカー（最小限。勘定科目詳細は beanpost） |
-
-**削除するもの：**
-
-- `r-money-income` / `r-money-expense`（勘定科目詳細は beanpost に委任）
+| `r-time` / `r-time-work` / `r-time-life` | 時間（observation のアンカー） |
+| `r-grocery` / beverage / 個別食品 | resource_link のアンカー |
+| `r-nutrition` / energy / protein / ... | 栄養（observation のアンカー） |
+| `r-money` | 金銭（observation のアンカー。勘定科目詳細は beanpost） |
 
 **移行計画：**
 
 - beanpost の Neon へのデプロイ（スキーマ適用）
 - Zaim → beanpost への ETL（過去データの変換）
-- 在庫管理システムの設計・実装（別途）
 - beanpost の導入完了まで Zaim を継続利用し、4月以降に切り替えを検討
 
 ---
