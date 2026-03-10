@@ -206,13 +206,6 @@ resource(_id, parent_id, is_leaf, cd, name, unit_id)
 -- balance_type（stock/flow）は廃止。残数管理は beanpost が担う。DCMP は観測のアンカーのみ。
 ```
 
-### resource_link — 変換ルール定義
-
-```sql
-resource_link(_id, source_id, target_id, ratio)
--- 実行はアプリ層。結果は Neon に書き戻す。
-```
-
 ### unit_master
 
 ```sql
@@ -415,19 +408,35 @@ event: Monster 飲む（2026-03-10）
 
 → 購入 event と摂取 event が別になることで、「いつ買ったか」と「いつ食べたか」が独立して記録される。
 
-**resource_link の役割：**
+**food → 栄養の変換比率テーブルの置き場所：**
 
-在庫 beanpost の出庫 Posting を読んだとき、App が栄養 Posting を自動生成するための変換表。
+変換比率（1 MONSTER-RR = carb 3.195g + salt 0.817g）は在庫帳簿の内部知識であり、
+DCMPに置く必要はない。在庫 beanpost の PostgreSQL スキーマに companion table として持つ。
 
 ```sql
-resource_link(source_id='r-monster-rr', target_id='r-carb',    ratio=3.195)
-resource_link(source_id='r-monster-rr', target_id='r-salt-eq', ratio=0.817)
+-- 在庫 beanpost スキーマ内（DCMP ではない）
+food_nutrition_ratio(commodity, nutrient, ratio)
+-- e.g. ('MONSTER-RR', 'CARB-G', 3.195)
+--      ('MONSTER-RR', 'SALT-G', 0.817)
 ```
+
+App はこのテーブルを参照して、摂取 transaction を自動生成する：
+
+```beancount
+; App が food_nutrition_ratio を読んで生成
+2026-03-10 * "Monster摂取"
+  Expenses:Nutrition:Carb    +3.195 CARB-G
+  Expenses:Nutrition:SaltEq  +0.817 SALT-G
+  Assets:Food:MonsterRR      -1 MONSTER-RR
+```
+
+**→ `resource_link` は DCMP スキーマから削除。変換ロジックは在庫システムに閉じる。**
 
 **DCMP の resource から削除するもの：**
 
 - `r-money-income` / `r-money-expense`（勘定科目詳細は 会計 beanpost に委任）
 - `balance_type` カラム（残数管理は beanpost が担う。DCMP には不要）
+- `resource_link` テーブル（変換比率は在庫 beanpost の companion table に移動）
 
 **resource 階層に残るもの：**
 
