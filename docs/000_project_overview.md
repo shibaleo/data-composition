@@ -369,26 +369,35 @@ DCMP は両インスタンスの Posting UUID を `record_id` として参照し
   → 値を持たない
 ```
 
-**購入・摂取の仕訳例：**
+**仕訳例：**
 
 ```beancount
 ; === 会計 beanpost ===
-; 購入時に食費を計上
+; 購入時に食費を計上（金銭の動きのみ）
 2026-03-10 * "Monster購入" "コンビニ"
   Assets:Cash:Wallet   -640 JPY
   Expenses:Food:Drink  +640 JPY
 
 ; === 在庫 beanpost ===
-; 購入時に在庫を積む
+; 入庫（購入時）: food / 入庫相手勘定
 2026-03-10 * "Monster入庫"
-  Assets:Grocery:MonsterRR  +2 MONSTER-RR
+  Assets:Food:MonsterRR      +2 MONSTER-RR
+  Equity:FoodReceipt:Monster -2 MONSTER-RR   ; 入庫相手勘定
 
-; 摂取時に在庫を崩し、栄養を計上（App が resource_link を参照して自動生成）
+; 食事（自炊）: 栄養 / food  ← 在庫を崩して栄養に変換（App が resource_link で自動生成）
 2026-03-10 * "Monster摂取"
-  Assets:Grocery:MonsterRR  -1 MONSTER-RR
-  Expenses:Nutrition:Carb  +3.195 CARB-G
-  Expenses:Nutrition:SaltEq +0.817 SALT-G
+  Expenses:Nutrition:Carb    +3.195 CARB-G
+  Expenses:Nutrition:SaltEq  +0.817 SALT-G
+  Assets:Food:MonsterRR      -1 MONSTER-RR   ; 在庫を減らす
+
+; 外食: 栄養 / 食事相手勘定  ← 在庫を介さず直接計上
+2026-03-10 * "ランチ" "定食屋"
+  Expenses:Nutrition:Energy  +680 KCAL
+  Expenses:Nutrition:Carb    +85 CARB-G
+  Equity:MealReceipt:Lunch   -1 MEAL        ; 食事相手勘定（ダミー）
 ```
+
+→ `Expenses:Nutrition:*` を集計すれば、自炊・外食問わず全栄養摂取量が揃う。
 
 **DCMP の observation：**
 
