@@ -200,16 +200,12 @@ event(2026-03-09 Monster 摂取) ← scenario(健康改善3月)
 ### resource — 分類オントロジー（主軸）
 
 ```sql
-resource(_id, parent_id, is_leaf, cd, name, unit_id)
+resource(_id, parent_id, is_leaf, cd, name)
 -- resource は DCMP で定義。DWH のテーブル構造とは独立。
 -- 異なるソース（Toggl/Clockify 等）からの観測が同じ resource に収束する。
--- balance_type（stock/flow）は廃止。残数管理は beanpost が担う。DCMP は観測のアンカーのみ。
-```
-
-### unit_master
-
-```sql
-unit_master(_id, name)
+-- unit_id 廃止: 単位はbeanpostのcommodity定義が持つ。DCMPは分類のアンカーのみ。
+-- balance_type 廃止: 残数管理は beanpost が担う。
+-- unit_master テーブル 廃止。
 ```
 
 ---
